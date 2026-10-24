@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="XivMark/XivMark.csproj" />
+  <Project Path="XivMark.Tests/XivMark.Tests.csproj" />
+</Solution>

@@ -1,0 +1,20 @@
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+  <PropertyGroup>
+    <Version>0.4.0.0</Version>
+    <Author>kuchris</Author>
+    <Name>XivMark</Name>
+    <Punchline>Customizable enemy job markers in Frontline.</Punchline>
+    <Description>Automatic native target markers in Frontline with configurable jobs, markers, order, timing, distance and job-change cleanup.</Description>
+    <RepoUrl>https://github.com/kuchris/xivmark</RepoUrl>
+    <RepositoryUrl>https://github.com/kuchris/xivmark</RepositoryUrl>
+    <IconUrl>https://raw.githubusercontent.com/kuchris/xivmark/0.4.0.0/images/icon.png</IconUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <Tags>frontline;pvp;markers</Tags>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../XivMark.Core/*.cs" Link="Core/%(Filename)%(Extension)" />
+    <None Include="../images/icon.png" Link="icon.png" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
