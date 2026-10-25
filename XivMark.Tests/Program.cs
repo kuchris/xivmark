@@ -38,6 +38,18 @@ if (args.Contains("--repro-unselected-marker"))
     return;
 }
 
+if (args.Contains("--repro-empty-slots"))
+{
+    var p = new MarkerPlanner(); var m = new uint[17];
+    Candidate[] c = Enumerable.Range(1, 14).Select(id => Drk((uint)id)).ToArray();
+    for (var i = 0; i < 13; i++)
+        Acknowledge(p, m, c, Step(p, m, c, i * 1000)!.Value, i * 1000);
+    Array.Clear(m);
+    Step(p, m, c, 15000);
+    Check(Step(p, m, c, 30000) != null, "eligible enemies with all thirteen marker slots visibly empty must not remain blocked for the rest of the duty");
+    return;
+}
+
 {
     var p = new MarkerPlanner(); var m = new uint[17]; Candidate[] c = [Drk(1), Dnc(2), Drk(3)];
     Acknowledge(p, m, c, Step(p, m, c)!.Value);
@@ -169,7 +181,7 @@ foreach (var reason in new[] { "death", "despawn", "range", "friendly", "job", "
     Acknowledge(p, m, c, Step(p, m, c)!.Value);
     m[0] = 0;
     Check(Step(p, m, [], 1000) == null && p.YieldedSlots == 1, "manual removal is respected");
-    Check(Step(p, m, c, 2000) == null, "removed mark is not automatically reapplied");
+    Check(Step(p, m, c, 2000) == null, "removed mark is not immediately reapplied during grace period");
 }
 {
     var p = new MarkerPlanner(); var m = new uint[17]; Candidate[] c = [Drk(1)];
@@ -398,5 +410,110 @@ foreach (var reason in new[] { "ally", "unknown job", "unloaded", "selected job"
     m[1] = 100;
     Step(p, m, [], 5000);
     Check(p.Unconfirmed.Count == 0 && p.YieldedSlots == 1 && m[1] == 100, "replacement during external cleanup is not mistaken for successful clear");
+}
+{
+    var p = new MarkerPlanner(); var m = new uint[17]; Candidate[] c = [Drk(1, 20)];
+    Acknowledge(p, m, c, Step(p, m, c)!.Value);
+    m[0] = 0;
+    var single = settings with { MaxMarkers = 1 };
+    Candidate[] nearby = [Drk(1, 30), Dnc(2, 1)];
+    Check(Step(p, m, nearby, 2000, options: single) == null && p.IsYielded(0), "disappeared mark starts empty-slot grace period");
+    Check(Step(p, m, nearby, 6999, options: single) == null && p.RecoveredSlots == 0, "empty slot is not reused before five stable seconds");
+    Check(Step(p, m, nearby, 7000, options: single) == new MarkerAction(0, 1, 0) && p.RecoveredSlots == 1, "restore original holder and same marker even when a different enemy is closer");
+    Acknowledge(p, m, nearby, Step(p, m, nearby, 7000, options: single)!.Value, 7000);
+    Check(Step(p, m, [Drk(1, 99), Dnc(2, 1)], 10000, options: single) == null && m[0] == 1, "restored occupied assignment never switches to a closer enemy");
+}
+{
+    var p = new MarkerPlanner(); var m = new uint[17]; Candidate[] c = [Drk(1)];
+    Acknowledge(p, m, c, Step(p, m, c)!.Value);
+    m[0] = 0;
+    var single = settings with { MaxMarkers = 1 };
+    Candidate[] nearby = [Drk(1, 500), Dnc(2, 5)];
+    Step(p, m, nearby, 2000, options: single);
+    Check(Step(p, m, nearby, 7000, options: single) == new MarkerAction(0, 2, 0), "empty slot can mark another eligible enemy when original holder is out of range");
+    Check(p.Owned.Count == 0 && m[0] == 0, "recovery only proposes assignment and does not write marker snapshot");
+}
+{
+    var p = new MarkerPlanner(); var m = new uint[17]; Candidate[] c = [Drk(1)];
+    Acknowledge(p, m, c, Step(p, m, c)!.Value);
+    m[0] = 999;
+    var single = settings with { MaxMarkers = 1 };
+    Check(Step(p, m, c, 2000, options: single) == null, "occupied replacement remains protected");
+    Check(Step(p, m, c, 20000, options: single) == null && m[0] == 999 && p.RecoveredSlots == 0, "time alone never frees an occupied marker");
+    m[0] = 0;
+    Step(p, m, c, 21000, options: single);
+    m[0] = 888;
+    Step(p, m, c, 24000, options: single);
+    m[0] = 0;
+    Step(p, m, c, 25000, options: single);
+    Check(Step(p, m, c, 29000, options: single) == null, "brief reoccupation restarts stable-empty grace period");
+    Check(Step(p, m, c, 30000, options: single) == new MarkerAction(0, 1, 0), "yielded marker is usable only after a fresh five-second empty period");
+}
+{
+    var p = new MarkerPlanner(); var m = new uint[17]; Candidate[] c = [Drk(1)];
+    Acknowledge(p, m, c, Step(p, m, c)!.Value);
+    m[0] = 0;
+    var single = settings with { MaxMarkers = 1, ReuseEmptySlots = false };
+    Step(p, m, c, 2000, options: single);
+    Check(Step(p, m, c, 60000, options: single) == null && p.RecoveredSlots == 0 && p.IsYielded(0), "optional strict mode respects manual removal for the rest of the duty");
+    Check(Step(p, m, c, 61000, options: single with { ReuseEmptySlots = true }) == new MarkerAction(0, 1, 0), "enabling refill can recover an already stable empty slot");
+}
+{
+    var p = new MarkerPlanner(); var m = new uint[17]; Candidate[] c = [Drk(1)];
+    Acknowledge(p, m, c, Step(p, m, c)!.Value);
+    m[0] = 0;
+    var single = settings with { MaxMarkers = 1 };
+    Step(p, m, c, 2000, enabled: false, options: single);
+    Check(Step(p, m, c, 7000, enabled: false, options: single) == null && p.RecoveredSlots == 0, "paused automation does not refill slots");
+    Check(Step(p, m, c, 8000, options: single) == new MarkerAction(0, 1, 0), "resuming after pause recovers stable empty slots");
+}
+{
+    var p = new MarkerPlanner(); var m = new uint[17]; Candidate[] c = [Drk(1)];
+    p.Sent(Step(p, m, c)!.Value, 0, 10000);
+    m[0] = 1;
+    Step(p, m, c, 250);
+    m[0] = 0;
+    Step(p, m, c, 1000);
+    Check(Step(p, m, c, 6000) == null && p.RecoveredSlots == 1, "refill grace does not bypass a longer configured operation interval");
+    Check(Step(p, m, c, 10000) == new MarkerAction(0, 1, 0), "refill proceeds when configured interval also expires");
+}
+{
+    var p = new MarkerPlanner(); var m = new uint[17]; Candidate[] c = [Drk(1)];
+    Acknowledge(p, m, c, Step(p, m, c)!.Value);
+    m[0] = 0; m[14] = 1;
+    var single = settings with { MaxMarkers = 1 };
+    Step(p, m, c, 2000, options: single);
+    Check(Step(p, m, c, 7000, options: single) == null, "recovery does not duplicate a target now marked in another slot");
+    Check(Step(p, m, [Drk(1), Dnc(2)], 8000, options: single) == new MarkerAction(0, 2, 0), "recovered slot may serve another enemy while original mark remains elsewhere");
+}
+{
+    var p = new MarkerPlanner(); var m = new uint[17];
+    Candidate[] c = Enumerable.Range(1, 14).Select(id => Drk((uint)id)).ToArray();
+    for (var i = 0; i < 13; i++) Acknowledge(p, m, c, Step(p, m, c, i * 1000)!.Value, i * 1000);
+    Array.Clear(m);
+    Step(p, m, c, 15000);
+    Check(Step(p, m, c, 19999) == null, "all empty slots remain guarded during initial grace period");
+    for (var i = 0; i < 13; i++)
+    {
+        var action = Step(p, m, c, 20000 + i * 1000);
+        Check(action?.Target == (uint)i + 1 && action?.Slot == MarkerOptions.DefaultOrder[i], $"full-pool refill {i + 1} preserves original target-to-marker mapping");
+        Acknowledge(p, m, c, action!.Value, 20000 + i * 1000);
+    }
+    Check(p.Owned.Count == 13 && p.RecoveredSlots == 13 && Step(p, m, c, 34000) == null, "full-pool recovery stops at capacity without moving any restored mark");
+    Step(p, m, c, 35000, frontline: false);
+    Check(p.RecoveredSlots == 0 && p.YieldedSlots == 0, "new duty resets recovery counters and grace periods");
+}
+{
+    var p = new MarkerPlanner(); var m = new uint[17]; Candidate[] c = [Drk(1)];
+    p.Sent(Step(p, m, c)!.Value, 0);
+    Step(p, m, c, 4000);
+    Check(Step(p, m, c, 30000) == null && p.Unconfirmed.Count == 1 && p.RecoveredSlots == 0, "refill never retries an unresolved native operation");
+    var migrated = System.Text.Json.JsonSerializer.Deserialize<XivMark.Configuration>("{\"Version\":3,\"Enabled\":true,\"Range\":100}")!;
+    migrated.Sanitize();
+    Check(migrated.Version == 4 && migrated.ReuseEmptySlots && migrated.ToSettings().ReuseEmptySlots && migrated.Enabled && migrated.Range == 100, "old configuration enables refill without losing existing settings");
+    migrated.ReuseEmptySlots = false;
+    var restored = System.Text.Json.JsonSerializer.Deserialize<XivMark.Configuration>(System.Text.Json.JsonSerializer.Serialize(migrated))!;
+    restored.Sanitize();
+    Check(!restored.ReuseEmptySlots && !restored.ToSettings().ReuseEmptySlots, "strict manual-removal preference persists across reload");
 }
 Console.WriteLine($"\n{passed} checks passed.");

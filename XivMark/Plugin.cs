@@ -38,6 +38,8 @@ public sealed partial class Plugin : IDalamudPlugin
     private string status = "Waiting for game state.";
     private string? error;
     private string? loggedWarning;
+    private long nextDiagnosticAt;
+    private int loggedRecoveredSlots;
     private Candidate[] candidates = [];
     private uint[] markers = new uint[17];
     private Settings Settings => config.ToSettings();
@@ -77,9 +79,10 @@ public sealed partial class Plugin : IDalamudPlugin
             case "on": config.Enabled = true; Save(); Chat.Print("[XivMark] Enabled for Frontline."); break;
             case "off": config.Enabled = false; Save(); Chat.Print("[XivMark] Disabled. Existing markers are kept; clear them manually if needed."); break;
             case "status":
-                var report = $"[XivMark {typeof(Plugin).Assembly.GetName().Version}] {error ?? status} Owned: {planner.Owned.Count}, yielded: {planner.YieldedSlots}, unconfirmed: {planner.Unconfirmed.Count}, eligible enemies: {candidates.Count(c => Settings.SupportsJob(c.Job) && MarkerPlanner.Eligible(c, Settings))}. {native.Status}";
+                var report = $"[XivMark {typeof(Plugin).Assembly.GetName().Version}] {error ?? status} Owned: {planner.Owned.Count}, yielded: {planner.YieldedSlots}, unconfirmed: {planner.Unconfirmed.Count}, recovered: {planner.RecoveredSlots}, eligible enemies: {candidates.Count(c => Settings.SupportsJob(c.Job) && MarkerPlanner.Eligible(c, Settings))}. {native.Status}";
                 Chat.Print(report);
                 Log.Information(report);
+                Log.Information(DiagnosticSnapshot(Settings));
                 if (planner.LastWarning is { } warning) Chat.Print($"[XivMark] Last warning: {warning}");
                 break;
             default: Open(); break;
@@ -100,6 +103,8 @@ public sealed partial class Plugin : IDalamudPlugin
                 planner.Reset();
                 error = null;
                 loggedWarning = null;
+                nextDiagnosticAt = 0;
+                loggedRecoveredSlots = 0;
                 frontline = false;
             }
             // TerritoryIntendedUse.Frontline = 18. Do not enable in Rival Wings, CC, or the Wolves' Den.
@@ -169,12 +174,32 @@ public sealed partial class Plugin : IDalamudPlugin
             }
             else if (action != null)
                 status = "Waiting - marker or job state changed before sending; checking again next scan.";
+            if (planner.RecoveredSlots != loggedRecoveredSlots)
+            {
+                loggedRecoveredSlots = planner.RecoveredSlots;
+                Log.Information($"Recovered empty marker slots: {loggedRecoveredSlots} total this duty; existing occupied marks were kept.");
+            }
+            // Permanent, rate-limited diagnostics: a future report can be investigated without
+            // requiring the player to capture transient state or remember a command mid-fight.
+            if (config.Enabled && now >= nextDiagnosticAt)
+            {
+                nextDiagnosticAt = now + 30000;
+                Log.Information(DiagnosticSnapshot(settings));
+            }
         }
         catch (Exception ex)
         {
             error = "Paused after an error. Check /xllog and reload the plugin.";
             Log.Error(ex, "XivMark update stopped");
         }
+    }
+
+    private string DiagnosticSnapshot(Settings settings)
+    {
+        var slots = settings.ActiveSlots.Select(slot => $"{MarkerPlanner.MarkerName(slot)}={markers[slot]:X8}{(planner.Unconfirmed.ContainsKey(slot) ? "/unconfirmed" : planner.IsYielded(slot) ? "/yielded" : "")}");
+        var observed = candidates.Where(c => settings.SupportsJob(c.Job)).Take(24)
+            .Select(c => $"{c.Id:X8}/job{c.Job}/{c.Distance:0}y/{(c.Enemy ? "enemy" : "friendly")}/{(c.Alive ? "alive" : "dead")}/{(c.Targetable ? "targetable" : "untargetable")}/{(c.InCombat ? "combat" : "idle")}");
+        return $"Marking snapshot v{typeof(Plugin).Assembly.GetName().Version}: {error ?? status} Territory={territory}; range={config.Range:0}; interval={config.IntervalMs}; combatOnly={config.CombatOnly}; refill={config.ReuseEmptySlots}; nativeReturn={native.LastReturnCode?.ToString() ?? "none"}; slots=[{string.Join(",", slots)}]; players=[{string.Join(",", observed)}]";
     }
 
     public void Dispose()

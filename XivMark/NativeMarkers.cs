@@ -19,6 +19,7 @@ internal sealed unsafe class NativeMarkers
     private readonly MarkDelegate? mark;
     public string Status { get; }
     public bool Ready => mark != null;
+    public byte? LastReturnCode { get; private set; }
 
     public NativeMarkers(ISigScanner scanner)
     {
@@ -69,7 +70,7 @@ internal sealed unsafe class NativeMarkers
         }
 
         // Repeating a mark on its current holder toggles it off. Never repeat while awaiting state confirmation.
-        _ = mark((nint)controller, (byte)(action.Slot + 1), clearing ? action.Expected : action.Target);
+        LastReturnCode = mark((nint)controller, (byte)(action.Slot + 1), clearing ? action.Expected : action.Target);
         return true; // Request issued, not server acknowledgement. Planner observes the next snapshot.
     }
 }

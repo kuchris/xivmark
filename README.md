@@ -23,6 +23,7 @@ If switching from a dev build, disable that copy first. Manual downloads are ava
 - Choose target jobs and the order of up to 13 markers: Attack 1–8, Chain 1–3 and Stop 1–2.
 - Customize range, marking interval, start delay and combat/death filters.
 - Keep assignments fixed through death and distance.
+- Reuse slots after they stay empty for 5 seconds, preferring their original eligible targets. This can be disabled.
 - Optionally clear enabled markers on unselected enemy jobs, including pre-existing marks.
 - View live status and nearby players in Diagnostics.
 

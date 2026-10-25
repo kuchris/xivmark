@@ -113,6 +113,10 @@ public sealed partial class Plugin
         var cleanup = config.ClearOtherJobs;
         if (ImGui.Checkbox("Clear marks on unselected enemy jobs", ref cleanup)) { config.ClearOtherJobs = cleanup; Save(); }
         Hint("Includes marks placed by others and marks left before reload. Allies and unknown jobs are kept.");
+        Gap(4);
+        var refill = config.ReuseEmptySlots;
+        if (ImGui.Checkbox("Refill marker slots after they become empty", ref refill)) { config.ReuseEmptySlots = refill; Save(); }
+        Hint("After 5 seconds empty, a slot becomes available again. Prefer its original eligible holder. Existing marks are never moved or overwritten. Turn off to respect manual removals for the rest of the duty.");
         Gap(14);
         ImGui.PushStyleColor(ImGuiCol.Text, Muted);
         ImGui.TextWrapped("Marks stay fixed through death and distance. Job cleanup also checks existing marks placed by others. Changes save automatically.");
@@ -198,7 +202,7 @@ public sealed partial class Plugin
                 ImGui.TableNextColumn();
                 var holder = markers[slot];
                 var job = jobs.FirstOrDefault(j => j.Id == candidates.FirstOrDefault(c => c.Id == holder).Job).Code;
-                var text = planner.Unconfirmed.ContainsKey(slot) ? "Awaiting update" : holder != 0 ? $"Assigned / {job ?? holder.ToString("X8")}" : !enabled ? "Disabled" : !activeSlots.Contains(slot) ? "Over capacity" : "Available";
+                var text = planner.Unconfirmed.ContainsKey(slot) ? "Awaiting update" : holder != 0 ? $"Assigned / {job ?? holder.ToString("X8")}" : planner.IsYielded(slot) ? config.ReuseEmptySlots ? "Refill pending" : "Reserved" : !enabled ? "Disabled" : !activeSlots.Contains(slot) ? "Over capacity" : "Available";
                 ImGui.TextColored(planner.Unconfirmed.ContainsKey(slot) ? Gold : holder != 0 ? Green : Muted, text);
                 ImGui.TableNextColumn();
                 ImGui.BeginDisabled(i == 0);
@@ -228,7 +232,7 @@ public sealed partial class Plugin
         Section("Diagnostics", "Only players loaded by your client are shown.");
         ImGui.Checkbox("Enemy players only", ref enemiesOnly);
         ImGui.SameLine();
-        MutedText($"Territory {territory}  /  {planner.YieldedSlots} yielded  /  {planner.Unconfirmed.Count} unconfirmed");
+        MutedText($"Territory {territory}  /  {planner.YieldedSlots} yielded  /  {planner.Unconfirmed.Count} unconfirmed  /  {planner.RecoveredSlots} recovered");
         if (planner.LastWarning != null)
         {
             Gap(8);

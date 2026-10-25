@@ -6,7 +6,7 @@ namespace XivMark;
 [Serializable]
 public sealed class Configuration : IPluginConfiguration
 {
-    public int Version { get; set; } = 3;
+    public int Version { get; set; } = 4;
     public bool Enabled { get; set; }
     public float Range { get; set; } = 60;
     public int MaxMarkers { get; set; } = 13;
@@ -15,12 +15,13 @@ public sealed class Configuration : IPluginConfiguration
     public bool CombatOnly { get; set; }
     public bool PauseWhenDead { get; set; }
     public bool ClearOtherJobs { get; set; } = true;
+    public bool ReuseEmptySlots { get; set; } = true;
     public uint[] Jobs { get; set; } = [MarkerPlanner.DarkKnight, MarkerPlanner.Dancer];
     public int[] MarkerOrder { get; set; } = MarkerOptions.DefaultOrder;
     public int[] EnabledMarkers { get; set; } = MarkerOptions.DefaultOrder;
 
     public Settings ToSettings() => new(Range, MaxMarkers, Jobs,
-        MarkerOrder.Where(EnabledMarkers.Contains).ToArray(), CombatOnly, ClearOtherJobs);
+        MarkerOrder.Where(EnabledMarkers.Contains).ToArray(), CombatOnly, ClearOtherJobs, ReuseEmptySlots);
 
     public void Sanitize()
     {
@@ -31,6 +32,6 @@ public sealed class Configuration : IPluginConfiguration
         Jobs = (Jobs ?? [MarkerPlanner.DarkKnight, MarkerPlanner.Dancer]).Where(j => j > 0).Distinct().ToArray();
         MarkerOrder = MarkerOptions.NormalizeOrder(MarkerOrder);
         EnabledMarkers = (EnabledMarkers ?? MarkerOptions.DefaultOrder).Where(MarkerOptions.IsSupported).Distinct().ToArray();
-        Version = 3;
+        Version = 4;
     }
 }

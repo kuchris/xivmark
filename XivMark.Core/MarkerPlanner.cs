@@ -3,7 +3,7 @@ namespace XivMark.Core;
 public readonly record struct Candidate(uint Id, uint Job, float Distance, bool Enemy, bool Alive, bool Targetable, bool InCombat = false);
 public readonly record struct MarkerAction(int Slot, uint Target, uint Expected);
 public readonly record struct Settings(float Range, int MaxMarkers, IReadOnlyList<uint>? Jobs = null,
-    IReadOnlyList<int>? MarkerSlots = null, bool CombatOnly = false, bool ClearOtherJobs = true)
+    IReadOnlyList<int>? MarkerSlots = null, bool CombatOnly = false, bool ClearOtherJobs = true, bool ReuseEmptySlots = true)
 {
     public bool SupportsJob(uint job) => job != 0 && (Jobs?.Contains(job) ?? job is MarkerPlanner.DarkKnight or MarkerPlanner.Dancer);
     public bool ShouldClearJob(uint job) => ClearOtherJobs && job != 0 && !SupportsJob(job);
@@ -18,10 +18,13 @@ public sealed class MarkerPlanner
     public const uint Dancer = 38;
     public const long IntervalMs = 1000;
     public const long AcknowledgementTimeoutMs = 4000;
+    public const long EmptySlotGraceMs = 5000;
     private readonly Dictionary<int, uint> owned = new();
     private readonly HashSet<int> yielded = new();
     private readonly HashSet<uint> markedTargets = new();
     private readonly Dictionary<int, MarkerAction> unconfirmed = new();
+    private readonly Dictionary<int, uint> previousTargets = new();
+    private readonly Dictionary<int, long> emptySince = new();
     // Native array order is Attack 1-5, Bind 1-3, Ignore 1-2, shapes, Attack 6-8.
     private MarkerAction? pending;
     private MarkerAction? proposedClear;
@@ -33,7 +36,9 @@ public sealed class MarkerPlanner
     public IReadOnlyDictionary<int, MarkerAction> Unconfirmed => unconfirmed;
     public IReadOnlyDictionary<int, uint> Owned => owned;
     public int YieldedSlots => yielded.Count;
+    public int RecoveredSlots { get; private set; }
     public bool Waiting => pending != null;
+    public bool IsYielded(int slot) => yielded.Contains(slot);
 
     public void Reset()
     {
@@ -41,6 +46,9 @@ public sealed class MarkerPlanner
         yielded.Clear();
         markedTargets.Clear();
         unconfirmed.Clear();
+        previousTargets.Clear();
+        emptySince.Clear();
+        RecoveredSlots = 0;
         pending = null;
         proposedClear = null;
         LastWarning = null;
@@ -88,8 +96,7 @@ public sealed class MarkerPlanner
             }
             else if (markers[slot] != lateRequest.Expected)
             {
-                owned.Remove(slot);
-                yielded.Add(slot);
+                Yield(slot, lateRequest.Target == 0 ? lateRequest.Expected : lateRequest.Target);
                 unconfirmed.Remove(slot);
             }
         }
@@ -104,8 +111,7 @@ public sealed class MarkerPlanner
             else if (markers[request.Slot] != request.Expected)
             {
                 // Another marker owner won the race. Do not compete for this slot this duty.
-                owned.Remove(request.Slot);
-                yielded.Add(request.Slot);
+                Yield(request.Slot, request.Target == 0 ? request.Expected : request.Target);
                 pending = null;
             }
             else if (now - sentAt >= AcknowledgementTimeoutMs)
@@ -125,8 +131,32 @@ public sealed class MarkerPlanner
         {
             if (markers[slot] == id)
                 continue;
-            owned.Remove(slot);
-            yielded.Add(slot);
+            Yield(slot, id);
+        }
+        // Empty is different from occupied by another player. Allow stable empty slots to
+        // recover after a grace period; never overwrite a marker that is still present.
+        foreach (var slot in yielded.ToArray())
+        {
+            if (markers[slot] != 0)
+            {
+                emptySince.Remove(slot);
+                continue;
+            }
+            if (!emptySince.TryGetValue(slot, out var since))
+            {
+                emptySince[slot] = now;
+                since = now;
+            }
+            if (!enabled || !settings.ReuseEmptySlots || now - since < EmptySlotGraceMs)
+                continue;
+            yielded.Remove(slot);
+            emptySince.Remove(slot);
+            if (previousTargets.TryGetValue(slot, out var previous) &&
+                !owned.Values.Contains(previous) &&
+                !unconfirmed.Values.Any(a => a.Target == previous || a.Expected == previous) &&
+                !(pending is { } active && (active.Target == previous || active.Expected == previous)))
+                markedTargets.Remove(previous);
+            RecoveredSlots++;
         }
         if (now < nextActionAt)
         {
@@ -173,7 +203,12 @@ public sealed class MarkerPlanner
         {
             if (markers[slot] != 0 || yielded.Contains(slot) || unconfirmed.ContainsKey(slot))
                 continue;
-            var candidate = eligible.FirstOrDefault(c => !markers.Contains(c.Id) && !markedTargets.Contains(c.Id));
+            var available = eligible.Where(c => !markers.Contains(c.Id) && !markedTargets.Contains(c.Id)).ToArray();
+            // If the original holder is still eligible, restore the same marker first.
+            var candidate = previousTargets.TryGetValue(slot, out var preferred)
+                ? available.FirstOrDefault(c => c.Id == preferred) : default;
+            if (candidate.Id == 0)
+                candidate = available.FirstOrDefault();
             if (candidate.Id != 0)
             {
                 Status = $"Assigning {MarkerName(slot)} to {candidate.Id:X8}.";
@@ -201,9 +236,19 @@ public sealed class MarkerPlanner
             // Deliberate job-change cleanup releases the target, unlike an external edit.
             markedTargets.Remove(request.Expected);
             yielded.Remove(request.Slot);
+            previousTargets.Remove(request.Slot);
+            emptySince.Remove(request.Slot);
         }
         else
             owned[request.Slot] = request.Target;
+    }
+
+    private void Yield(int slot, uint previousTarget)
+    {
+        owned.Remove(slot);
+        yielded.Add(slot);
+        previousTargets[slot] = previousTarget;
+        emptySince.Remove(slot);
     }
 
     public void Sent(MarkerAction request, long now, int intervalMs = 1000)
@@ -217,7 +262,10 @@ public sealed class MarkerPlanner
         pending = request;
         proposedClear = null;
         if (request.Target != 0)
+        {
             markedTargets.Add(request.Target);
+            previousTargets.Remove(request.Slot);
+        }
         sentAt = now;
         nextActionAt = now + Math.Clamp(intervalMs, 1000, 10000);
     }
